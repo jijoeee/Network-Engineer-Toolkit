@@ -12,6 +12,7 @@ An extensible Python suite for network automation and engineering. Built for rel
 |------|---------|--------|-------------|
 | **IP Subnet Calculator** | v1.0 | ✅ Active | High-performance IPv4/IPv6 subnetting, VLSM calculation, and smart next-hop logic with a modern Dark Mode GUI. |
 | **Bulk Network Ping Monitor** | v1.0 | ✅ Active | High-speed, parallel ping monitoring for hundreds of devices with a live dark-mode dashboard, Excel integration, and automated CSV reporting. |
+| **Config Backup Runner** | v1.0 | ✅ Active | Pings, then SSHes into every device in `devices.xlsx` (Cisco IOS and Huawei VRP), saves each running-config to a dated `backups/` folder, and writes an OK/FAILED CSV report. Read-only; credentials prompted at run time, never stored. |
 ... In progress ...
 
 ## 🚀 Installation & Setup
@@ -60,3 +61,17 @@ python ip_subnet_calculator.py
     Session Management: Features a clean Pause/Resume engine and automatically resets data counters upon starting a fresh session.
     
     Automated NOC Reporting: One-click export dynamically generates a timestamped CSV report and saves it directly to a dedicated report/ directory.
+
+3) Config Backup Runner
+
+    Same Inventory: Reads the very same devices.xlsx (Hostname, IP, Location, Device Type, Group) the Ping Monitor uses — one device list for the whole toolkit.
+
+    Ping-First, Then SSH: Pings each device before connecting, so unreachable boxes are skipped instead of blocking on a 30-second SSH timeout.
+
+    Multi-Vendor: Pulls the running-config from Cisco IOS/IOS-XE (show running-config) and Huawei VRP (display current-configuration); Arista, HP Comware and Juniper are recognised too, with a safe default for anything else.
+
+    Dated Archive: Saves each config to backups/YYYY-MM-DD/<hostname>.cfg — an instant point-in-time record of every box.
+
+    OK/FAILED Report: Writes a timestamped CSV to report/ saying exactly which devices backed up and why any failed (unreachable, auth, timeout).
+
+    Safe by Design: Read-only — it never pushes config. Credentials are prompted at run time or read from NET_USER / NET_PASS / NET_ENABLE, and are never written to a file.
