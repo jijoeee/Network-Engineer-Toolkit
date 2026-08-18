@@ -12,8 +12,13 @@ An extensible Python suite for network automation and engineering. Built for rel
 |------|---------|--------|-------------|
 | **IP Subnet Calculator** | v1.0 | ✅ Active | High-performance IPv4/IPv6 subnetting, VLSM calculation, and smart next-hop logic with a modern Dark Mode GUI. |
 | **Bulk Network Ping Monitor** | v1.0 | ✅ Active | High-speed, parallel ping monitoring for hundreds of devices with a live dark-mode dashboard, Excel integration, and automated CSV reporting. |
-| **Config Backup Runner** | v1.0 | ✅ Active | Pings, then SSHes into every device in `devices.xlsx` (Cisco IOS and Huawei VRP), saves each running-config to a dated `backups/` folder, and writes an OK/FAILED CSV report. Read-only; credentials prompted at run time, never stored. |
+| **Config Backup Runner** | v1.0 | 🧪 Beta — not yet run against live hardware | Pings, then SSHes into every device in `devices.xlsx` (Cisco IOS and Huawei VRP), saves each running-config to a dated `backups/` folder, and writes an OK/FAILED CSV report. Read-only; credentials prompted at run time, never stored. |
 ... In progress ...
+
+> **On the Beta label:** the Config Backup Runner's parsing, vendor mapping, output paths, CSV
+> reporting and error handling are covered by offline tests, but no maintainer has yet run it
+> against a physical Cisco or Huawei device. Try it on one lab box before you point it at a
+> production inventory. It is read-only by design — it has no code path that writes to a device.
 
 ## 🚀 Installation & Setup
 
@@ -64,14 +69,45 @@ python ip_subnet_calculator.py
 
 3) Config Backup Runner
 
-    Same Inventory: Reads the very same devices.xlsx (Hostname, IP, Location, Device Type, Group) the Ping Monitor uses — one device list for the whole toolkit.
+    Same Inventory: Reads the very same devices.xlsx (Hostname, IP, Location, Device Type, Group) the Ping Monitor uses — one device list for the whole toolkit. A ready-made sample ships in the tool's folder, so it runs out of the box.
 
     Ping-First, Then SSH: Pings each device before connecting, so unreachable boxes are skipped instead of blocking on a 30-second SSH timeout.
 
-    Multi-Vendor: Pulls the running-config from Cisco IOS/IOS-XE (show running-config) and Huawei VRP (display current-configuration); Arista, HP Comware and Juniper are recognised too, with a safe default for anything else.
+    Multi-Vendor: Pulls the running-config from Cisco IOS/IOS-XE (show running-config) and Huawei VRP (display current-configuration); Arista, HP Comware and Juniper are recognised too. The vendor is read from the Device Type column and is matched inside the cell, so "Huawei S5720" and "Cisco IOS-XE router" both resolve — you do not have to reformat your existing inventory.
+
+    Tells You Before, Not After: A bare "router" or "switch" in the Device Type column names the shape of the box, not the CLI it speaks. Those fall back to Cisco, and every device that fell back is listed on screen before the run starts — so you fix one spreadsheet column instead of reading 200 FAILED rows.
 
     Dated Archive: Saves each config to backups/YYYY-MM-DD/<hostname>.cfg — an instant point-in-time record of every box.
 
     OK/FAILED Report: Writes a timestamped CSV to report/ saying exactly which devices backed up and why any failed (unreachable, auth, timeout).
 
-    Safe by Design: Read-only — it never pushes config. Credentials are prompted at run time or read from NET_USER / NET_PASS / NET_ENABLE, and are never written to a file.
+    Safe by Design: Read-only — it never pushes config. Credentials are prompted at run time or read from NET_USER / NET_PASS / NET_ENABLE, are never written to a file, and are masked out of any error message before it reaches the log or the CSV.
+
+### How to use the Config Backup Runner
+
+```bash
+cd tools/config_backup_runner
+
+# 1. Open devices.xlsx and put your own devices in it. Five columns, header on row 1:
+#
+#      Hostname  | IP Address | Location | Device Type (vendor) | Group
+#      core-rtr1 | 10.0.0.1   | HQ       | cisco_ios            | core
+#      dist-sw1  | 10.0.0.2   | HQ       | huawei               | distribution
+#
+#    Device Type must name the VENDOR, not the form factor: cisco / cisco_xe /
+#    huawei / arista / juniper / hp_comware. Anything the tool cannot recognise is
+#    listed as a warning before the run starts.
+
+# 2. Run it. It asks for the SSH username and password, and they are never saved:
+python config_backup_runner.py
+
+#    To run it unattended instead (a scheduled nightly backup), export them first:
+#      export NET_USER=netadmin NET_PASS='...' NET_ENABLE='...'    # Linux/macOS
+#      set NET_USER=netadmin & set NET_PASS=...                    # Windows cmd
+
+# 3. Read the results:
+#      backups/2026-08-19/core-rtr1.cfg          one file per device that succeeded
+#      report/Config_Backup_Report_*.csv         OK/FAILED and the reason, per device
+```
+
+Both `backups/` and `report/` are git-ignored — your configs are yours and never get committed.

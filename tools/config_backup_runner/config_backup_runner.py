@@ -21,9 +21,15 @@ What it does, in order:
 Credentials are asked for at run time, or read from the environment
 (NET_USER / NET_PASS / NET_ENABLE). They are never written to a file.
 
-Vendor is taken from the "Device Type" column in the spreadsheet. Recognised
-values (case-insensitive): cisco, cisco_ios, ios, huawei, hp_comware, arista,
-juniper. Anything unrecognised defaults to cisco_ios and is flagged in the log.
+Vendor is taken from the "Device Type" column in the spreadsheet, and that
+column must name a VENDOR, not a form factor. "huawei", "Huawei S5720",
+"cisco_ios" and "Cisco IOS-XE router" all resolve; a bare "router" or "switch"
+does not, because it says nothing about which command dumps the config.
+Recognised vendors (case-insensitive, matched anywhere in the cell): cisco,
+cisco_xe, ios, huawei, hp_comware, arista, juniper. Anything unrecognised falls
+back to cisco_ios, and every device that fell back is listed on screen before
+the run starts, so you find out before 200 devices come back FAILED rather than
+after.
 
 Usage:
     pip install -r requirements.txt      # netmiko, openpyxl
@@ -84,6 +90,9 @@ VENDOR_MAP = {
     "cisco_ios":   ("cisco_ios",   "show running-config"),
     "ios":         ("cisco_ios",   "show running-config"),
     "cisco_xe":    ("cisco_xe",    "show running-config"),
+    "cisco_ios_xe":("cisco_xe",    "show running-config"),
+    "ios_xe":      ("cisco_xe",    "show running-config"),
+    "iosxe":       ("cisco_xe",    "show running-config"),
     "huawei":      ("huawei",      "display current-configuration"),
     "hp_comware":  ("hp_comware",  "display current-configuration"),
     "arista":      ("arista_eos",  "show running-config"),
@@ -92,13 +101,38 @@ VENDOR_MAP = {
 }
 DEFAULT_VENDOR = ("cisco_ios", "show running-config")
 
+# Longest keys first, so "arista_eos" is tested before "arista". Matching is
+# done inside the cell, not on the whole cell, because real inventories say
+# "Huawei S5720" or "Cisco IOS-XE router", not "huawei".
+#
+# Longest-first is why "cisco_ios_xe" and "ios_xe" have to be in the map above
+# as keys of their own: normalised, "Cisco IOS-XE router" is
+# "cisco_ios_xe_router", which contains BOTH "cisco_ios" (9) and "cisco_xe" (8),
+# and the longer one would otherwise win and hand an IOS-XE box the plain
+# cisco_ios driver. The 12-character key now wins instead.
+VENDOR_KEYS_BY_LENGTH = sorted(VENDOR_MAP, key=len, reverse=True)
+
 
 def resolve_vendor(device_type):
-    """Return (netmiko_device_type, backup_command, was_defaulted)."""
-    key = (device_type or "").strip().lower().replace(" ", "_")
+    """Return (netmiko_device_type, backup_command, was_defaulted).
+
+    The cell is matched vendor-first: an exact hit wins, otherwise the first
+    recognised vendor name appearing anywhere in the cell wins. Form-factor
+    words on their own ("router", "switch", "firewall") deliberately do NOT
+    match — they name the shape of the box, not the CLI it speaks — so they
+    fall back to cisco_ios and are reported as a fallback rather than silently
+    treated as Cisco.
+    """
+    key = (device_type or "").strip().lower().replace(" ", "_").replace("-", "_")
     if key in VENDOR_MAP:
         dt, cmd = VENDOR_MAP[key]
         return dt, cmd, False
+
+    for vendor in VENDOR_KEYS_BY_LENGTH:
+        if vendor in key:
+            dt, cmd = VENDOR_MAP[vendor]
+            return dt, cmd, False
+
     return DEFAULT_VENDOR[0], DEFAULT_VENDOR[1], True
 
 
@@ -112,8 +146,16 @@ def load_devices():
         sys.exit(1)
 
     devices = []
-    wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
-    ws = wb.active
+    try:
+        wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
+        ws = wb.active
+    except Exception as e:
+        print(f"ERROR: '{EXCEL_FILE}' could not be read as an Excel workbook.")
+        print(f"       {type(e).__name__}: {e}")
+        print("       It must be a real .xlsx saved by Excel or LibreOffice — "
+              "a renamed .csv or .xls will not work.")
+        sys.exit(1)
+
     for row in ws.iter_rows(min_row=2, max_col=5, values_only=True):
         if not row or not row[0] or not row[1]:
             continue
@@ -125,6 +167,22 @@ def load_devices():
             "group":       str(row[4]).strip() if len(row) > 4 and row[4] else "-",
         })
     return devices
+
+
+def scrub(text, creds):
+    """Mask the password/enable secret if they ever appear in text we log."""
+    for key in ("password", "secret"):
+        value = creds.get(key)
+        if value and value in text:
+            text = text.replace(value, "***")
+    return text
+
+
+def safe_filename(hostname):
+    """A hostname off a spreadsheet is untrusted text — keep it inside out_dir."""
+    cleaned = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in hostname)
+    cleaned = cleaned.strip(". ") or "device"
+    return cleaned[:100]
 
 
 # --- Reachability -----------------------------------------------------------
@@ -185,7 +243,7 @@ def backup_device(device, creds, out_dir):
             result["detail"] += "connected but config was empty"
             return result
 
-        out_path = os.path.join(out_dir, f"{hostname}.cfg")
+        out_path = os.path.join(out_dir, f"{safe_filename(hostname)}.cfg")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(output)
 
@@ -199,7 +257,10 @@ def backup_device(device, creds, out_dir):
     except NetmikoTimeoutException:
         result["detail"] += "connection timed out"
     except Exception as e:
-        result["detail"] += f"error: {e}"
+        # This string is printed AND written to the CSV. A third-party library's
+        # exception text is not ours to trust, so anything that looks like the
+        # credentials we just handed it is masked before it can be persisted.
+        result["detail"] += f"error: {scrub(str(e), creds)}"
     return result
 
 
@@ -247,6 +308,24 @@ def main():
         print("No devices found in devices.xlsx. Nothing to do.")
         return
     print(f"Loaded {len(devices)} device(s) from {os.path.basename(EXCEL_FILE)}.")
+
+    # Say which devices we could not identify a vendor for BEFORE the run, not
+    # after. On a 200-device inventory that is the difference between fixing one
+    # spreadsheet column and reading 200 FAILED rows.
+    unknown = [d for d in devices if resolve_vendor(d["device_type"])[2]]
+    if unknown:
+        print()
+        print(f"WARNING: {len(unknown)} of {len(devices)} device(s) have no recognised "
+              f"vendor in the 'Device Type' column.")
+        print(f"         They will be tried as {DEFAULT_VENDOR[0]} "
+              f"(`{DEFAULT_VENDOR[1]}`), which will fail on a non-Cisco box.")
+        for d in unknown[:10]:
+            print(f"         - {d['hostname']:<20} Device Type = '{d['device_type']}'")
+        if len(unknown) > 10:
+            print(f"         - ...and {len(unknown) - 10} more")
+        print("         Put the vendor in that column (cisco / huawei / arista / "
+              "juniper / hp_comware).")
+        print()
 
     creds = get_credentials()
 

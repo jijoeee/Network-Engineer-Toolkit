@@ -1,3 +1,8 @@
+# Toolkit runtime output — generated per run, never source
+tools/*/report/
+tools/*/backups/
+tools/*/snapshots/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
