@@ -1,0 +1,16 @@
+# Bulk Show-Command Runner — command list
+# One command per line. Lines starting with # are ignored.
+# These are safe, read-only checks. Edit freely for your own pre/post-change checks.
+#
+# --- Cisco IOS examples ---
+show ip interface brief
+show cdp neighbors
+show version
+show ip route summary
+# show interfaces status
+# show spanning-tree summary
+#
+# --- Huawei VRP equivalents (uncomment if your fleet is Huawei) ---
+# display ip interface brief
+# display lldp neighbor brief
+# display version
