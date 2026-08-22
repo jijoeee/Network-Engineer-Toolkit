@@ -1,0 +1,53 @@
+# EZKerja — build the free Lite tool into a Windows .exe on a real Windows machine.
+#
+# The Lite download is the IP Subnet Calculator, and only that. The Bulk Ping Monitor,
+# the Config Backup Runner and the Bulk Show-Command Runner are deliberately not in it.
+#
+# The Orange Pi that maintains this repo is aarch64 Linux and physically cannot produce a
+# Windows binary. This runs on GitHub's Windows runners instead — free on public repos,
+# and a genuinely correct build.
+
+name: build-exe
+
+on:
+  workflow_dispatch:        # Triggered on request via gh.sh build <repo>. Nothing else fires it.
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        # Lite needs customtkinter and nothing else — ipaddress and tkinter are stdlib.
+        # Deliberately NOT `pip install -r requirements.txt`: that also pins netmiko,
+        # openpyxl and ping3 for the other three tools, and bundling SSH and Excel
+        # libraries into a free subnet calculator makes the download far larger than
+        # the tool it contains. The constraint below matches requirements.txt's line.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install "customtkinter>=5.2.0"
+
+      - name: Build the Lite .exe
+        # Entry point is named explicitly. The previous heuristic looked for main.py or
+        # app.py or the first *.py in the repo root — there is no .py in the root at all,
+        # so it resolved to nothing. Naming it also stops a later tool being picked up.
+        # --collect-all customtkinter ships that package's theme JSON and fonts, which a
+        # --onefile build does not pick up on its own.
+        run: |
+          pyinstaller --onefile --noconsole `
+            --name "EZKerja-Subnet-Calculator-Lite" `
+            --collect-all customtkinter `
+            tools/subnet_calculator/ip_subnet_calculator.py
+
+      - name: Upload the .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/*.exe
+          retention-days: 30
